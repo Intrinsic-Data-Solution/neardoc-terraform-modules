@@ -1,7 +1,17 @@
 resource "aws_security_group" "this" {
-  name        = var.name
+  # name_prefix (not a fixed name) + create_before_destroy: on any change that forces
+  # replacement, Terraform must be able to create the new SG (and re-point dependents at it)
+  # BEFORE destroying the old one — a fixed `name` would collide with the still-existing old
+  # SG during that window, and without create_before_destroy the default destroy-then-create
+  # order tries to delete a SG that's still attached to a running instance, which AWS refuses
+  # (DependencyViolation) — this is exactly the failure this module originally hit live.
+  name_prefix = "${var.name}-"
   description = "Managed by neardoc-terraform-modules//modules/infrastructure/security-group"
   vpc_id      = var.vpc_id
+
+  lifecycle {
+    create_before_destroy = true
+  }
 
   dynamic "ingress" {
     for_each = var.ingress_rules
