@@ -1,16 +1,15 @@
-resource "aws_ecr_repository" "this" {
-  name                 = var.ecr_repo_name
-  image_tag_mutability = "MUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
+# ECR repo creation is owned by the CI pipeline (docker-build-push.yml's "ensure ECR
+# repository exists" step runs BEFORE any docker push, which happens before this Deploy-stage
+# terraform apply ever runs) — not by Terraform. This is a lookup, not a managed resource, so
+# there's no create-time race or "already exists" conflict between the two.
+data "aws_ecr_repository" "this" {
+  name = var.ecr_repo_name
 }
 
 # Standard two-rule policy: expire untagged images past a short retention window, then cap total
 # image count regardless of tag status.
 resource "aws_ecr_lifecycle_policy" "this" {
-  repository = aws_ecr_repository.this.name
+  repository = data.aws_ecr_repository.this.name
 
   policy = jsonencode({
     rules = [
@@ -46,7 +45,10 @@ resource "terraform_data" "deploy_trigger" {
   triggers_replace = [var.image_tag]
 
   provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
+    # Local-Agents is Windows-only today; Git Bash exists at this fixed path (see
+    # neardoc-infra CONVENTIONS.md's "Windows agent + bash" note for the same reasoning applied
+    # to the Azure Pipelines YAML templates).
+    interpreter = ["C:/Program Files/Git/bin/bash.exe", "-c"]
 
     environment = {
       AWS_REGION            = var.aws_region
@@ -155,5 +157,4 @@ resource "terraform_data" "deploy_trigger" {
     EOT
   }
 
-  depends_on = [aws_ecr_repository.this]
 }
