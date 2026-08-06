@@ -127,12 +127,20 @@ resource "terraform_data" "deploy_trigger" {
       SSM_PARAMS_FILE=$(mktemp)
       printf '%s' "{\"commands\":[\"cd $COMPOSE_DIR && IMAGE_TAG=$IMAGE_TAG docker compose pull $COMPOSE_SERVICE_NAME && IMAGE_TAG=$IMAGE_TAG docker compose up -d $COMPOSE_SERVICE_NAME\",\"cd $COMPOSE_DIR; HEALTHY=0; for i in \$(seq 1 $HEALTH_ITERATIONS); do docker compose ps --status running --services 2>/dev/null | grep -qx '$COMPOSE_SERVICE_NAME' && HEALTHY=1 && break; sleep $HEALTH_POLL_INTERVAL; done; if [ \$HEALTHY -ne 1 ]; then echo container did not reach running state; docker compose logs --tail 30 $COMPOSE_SERVICE_NAME; exit 1; fi; echo container running\"]}" > "$SSM_PARAMS_FILE"
 
+      # mktemp's POSIX-style /tmp/... path is meaningless to the native Windows aws.exe when
+      # passed as a file:// URI (it's not auto-translated the way a bare path argument would
+      # be) — confirmed live: "Unable to load paramfile file:///tmp/tmp.XXXXXX: No such file or
+      # directory", despite the file existing fine at that path from Git Bash's own point of
+      # view. cygpath -m converts it to the Windows-style forward-slash form aws.exe can
+      # actually resolve.
+      SSM_PARAMS_FILE_WIN=$(cygpath -m "$SSM_PARAMS_FILE")
+
       COMMAND_ID=$(aws ssm send-command \
         --region "$AWS_REGION" \
         --instance-ids "$INSTANCE_ID" \
         --document-name "AWS-RunShellScript" \
         --comment "deploy $COMPOSE_SERVICE_NAME:$IMAGE_TAG" \
-        --parameters "file://$SSM_PARAMS_FILE" \
+        --parameters "file://$SSM_PARAMS_FILE_WIN" \
         --query "Command.CommandId" \
         --output text)
 
