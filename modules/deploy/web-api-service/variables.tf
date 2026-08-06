@@ -41,18 +41,29 @@ variable "start_lambda_function_name" {
 
 # --- Health check (the difference from the background-service module) ---
 
+# health_check_target_host/path/port are no longer used internally as of the switch to an
+# on-box container-status check (main.tf's SSM commands array) instead of an external HTTP
+# curl — that external check always timed out in practice, since neardoc-ec2-sg deliberately
+# only allows port 80 from CloudFront's prefix list, not arbitrary internet clients (this
+# module's own CI agent included), and even from on-box, nginx's /health is coupled to
+# gateway-api also being deployed via nginx's depends_on — a single service's health must not
+# depend on a different service's deploy status. Left declared (unused) rather than removed, so
+# every existing caller's terraform/main.tf that still passes health_check_target_host doesn't
+# need editing across all 9 web-api-service repos for a no-op variable.
 variable "health_check_target_host" {
-  description = "Host/IP to poll for the post-deploy health check, e.g. the box's Elastic IP. Polls straight over HTTP on the box's public interface — matches the platform's plain-HTTP-origin decision, not through the public CDN hostname (avoids the check depending on CloudFront/DNS being in a healthy state as a precondition of a service deploy succeeding)."
+  description = "Unused as of the on-box container-status health check switch - see the comment above. Kept only so existing callers don't need to drop this argument."
   type        = string
+  default     = null
 }
 
 variable "health_check_path" {
-  description = "Path polled for a 200 response after the SSM deploy command succeeds. Default is nginx's own aggregate /health — override to a service-specific path (e.g. /bff/health behind the gateway route) if a deeper check is wanted."
+  description = "Unused as of the on-box container-status health check switch - see the comment above."
   type        = string
   default     = "/health"
 }
 
 variable "health_check_port" {
+  description = "Unused as of the on-box container-status health check switch - see the comment above."
   type    = number
   default = 80
 }
