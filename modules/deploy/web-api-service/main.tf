@@ -98,12 +98,19 @@ resource "terraform_data" "deploy_trigger" {
 
       echo "=== [web-api-service] sending SSM deploy command for compose service '$COMPOSE_SERVICE_NAME' on instance $INSTANCE_ID ==="
 
+      # IMAGE_TAG=$IMAGE_TAG is passed inline rather than relying on /opt/neardoc/.env's own
+      # IMAGE_TAG - that file is only refreshed by user-data.sh at boot (defaults to "latest",
+      # a tag this pipeline never actually pushes) and is shared across all 12 services, so
+      # trusting it here would deploy whatever tag happened to be baked in at boot, not the tag
+      # this exact apply just built. The inline override only affects this one command's
+      # environment; other already-running services are untouched either way since "docker
+      # compose up -d $COMPOSE_SERVICE_NAME" only touches the named service.
       COMMAND_ID=$(aws ssm send-command \
         --region "$AWS_REGION" \
         --instance-ids "$INSTANCE_ID" \
         --document-name "AWS-RunShellScript" \
         --comment "deploy $COMPOSE_SERVICE_NAME:$IMAGE_TAG" \
-        --parameters commands="cd $COMPOSE_DIR && docker compose pull $COMPOSE_SERVICE_NAME && docker compose up -d $COMPOSE_SERVICE_NAME" \
+        --parameters commands="cd $COMPOSE_DIR && IMAGE_TAG=$IMAGE_TAG docker compose pull $COMPOSE_SERVICE_NAME && IMAGE_TAG=$IMAGE_TAG docker compose up -d $COMPOSE_SERVICE_NAME" \
         --query "Command.CommandId" \
         --output text)
 

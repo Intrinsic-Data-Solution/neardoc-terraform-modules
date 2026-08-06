@@ -97,12 +97,16 @@ resource "terraform_data" "deploy_trigger" {
 
       echo "=== [background-service] sending SSM deploy command for compose service '$COMPOSE_SERVICE_NAME' on instance $INSTANCE_ID ==="
 
+      # IMAGE_TAG=$IMAGE_TAG is passed inline rather than relying on /opt/neardoc/.env's own
+      # IMAGE_TAG - see the identical note in the sibling web-api-service module for the full
+      # reasoning (that file's IMAGE_TAG defaults to "latest", a tag this pipeline never
+      # actually pushes, and is shared across all 12 services).
       COMMAND_ID=$(aws ssm send-command \
         --region "$AWS_REGION" \
         --instance-ids "$INSTANCE_ID" \
         --document-name "AWS-RunShellScript" \
         --comment "deploy $COMPOSE_SERVICE_NAME:$IMAGE_TAG" \
-        --parameters commands="cd $COMPOSE_DIR && docker compose pull $COMPOSE_SERVICE_NAME && docker compose up -d $COMPOSE_SERVICE_NAME" \
+        --parameters commands="cd $COMPOSE_DIR && IMAGE_TAG=$IMAGE_TAG docker compose pull $COMPOSE_SERVICE_NAME && IMAGE_TAG=$IMAGE_TAG docker compose up -d $COMPOSE_SERVICE_NAME" \
         --query "Command.CommandId" \
         --output text)
 
