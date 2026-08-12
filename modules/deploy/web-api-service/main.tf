@@ -65,6 +65,12 @@ resource "terraform_data" "deploy_trigger" {
       SSM_POLL_INTERVAL     = tostring(var.ssm_poll_interval_seconds)
       HEALTH_ITERATIONS     = tostring(max(1, floor(var.health_check_timeout_seconds / var.health_check_poll_interval_seconds)))
       HEALTH_POLL_INTERVAL  = tostring(var.health_check_poll_interval_seconds)
+      # See the identical note in the sibling background-service module: the box's boot-time
+      # docker ECR login (user-data.sh) expires after 12h, and this box wakes from scale-to-zero
+      # without a full reboot, so re-authenticating right before every pull (same instance-role
+      # credentials the box already has) removes the dependency on boot-time login freshness —
+      # confirmed live 2026-08-12 ("Your authorization token has expired" on docker compose pull).
+      ECR_REGISTRY = "${data.aws_ecr_repository.this.registry_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
     }
 
     command = <<-EOT
@@ -125,7 +131,7 @@ resource "terraform_data" "deploy_trigger" {
       # backslash-escaped so they stay literal text here and are only evaluated once, remotely,
       # when SSM actually runs this string as a shell command on the box.
       SSM_PARAMS_FILE=$(mktemp)
-      printf '%s' "{\"commands\":[\"cd $COMPOSE_DIR && IMAGE_TAG=$IMAGE_TAG docker compose pull $COMPOSE_SERVICE_NAME && IMAGE_TAG=$IMAGE_TAG docker compose up -d $COMPOSE_SERVICE_NAME\",\"cd $COMPOSE_DIR; HEALTHY=0; for i in \$(seq 1 $HEALTH_ITERATIONS); do docker compose ps --status running --services 2>/dev/null | grep -qx '$COMPOSE_SERVICE_NAME' && HEALTHY=1 && break; sleep $HEALTH_POLL_INTERVAL; done; if [ \$HEALTHY -ne 1 ]; then echo container did not reach running state; docker compose logs --tail 30 $COMPOSE_SERVICE_NAME; exit 1; fi; echo container running\"]}" > "$SSM_PARAMS_FILE"
+      printf '%s' "{\"commands\":[\"cd $COMPOSE_DIR && aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY && IMAGE_TAG=$IMAGE_TAG docker compose pull $COMPOSE_SERVICE_NAME && IMAGE_TAG=$IMAGE_TAG docker compose up -d $COMPOSE_SERVICE_NAME\",\"cd $COMPOSE_DIR; HEALTHY=0; for i in \$(seq 1 $HEALTH_ITERATIONS); do docker compose ps --status running --services 2>/dev/null | grep -qx '$COMPOSE_SERVICE_NAME' && HEALTHY=1 && break; sleep $HEALTH_POLL_INTERVAL; done; if [ \$HEALTHY -ne 1 ]; then echo container did not reach running state; docker compose logs --tail 30 $COMPOSE_SERVICE_NAME; exit 1; fi; echo container running\"]}" > "$SSM_PARAMS_FILE"
 
       # mktemp's POSIX-style /tmp/... path is meaningless to the native Windows aws.exe when
       # passed as a file:// URI (it's not auto-translated the way a bare path argument would
