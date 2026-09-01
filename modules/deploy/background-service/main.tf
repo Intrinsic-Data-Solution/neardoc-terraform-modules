@@ -51,11 +51,20 @@ resource "terraform_data" "deploy_trigger" {
     interpreter = ["C:/Program Files/Git/bin/bash.exe", "-c"]
 
     environment = {
-      AWS_REGION            = var.aws_region
-      INSTANCE_ID           = var.instance_id
-      COMPOSE_SERVICE_NAME  = var.compose_service_name
-      COMPOSE_DIR           = var.compose_dir
-      IMAGE_TAG             = var.image_tag
+      AWS_REGION           = var.aws_region
+      INSTANCE_ID          = var.instance_id
+      COMPOSE_SERVICE_NAME = var.compose_service_name
+      COMPOSE_DIR          = var.compose_dir
+      IMAGE_TAG            = var.image_tag
+      # The box's own docker ECR login (done once, at boot, by user-data.sh — see that script's
+      # "aws ecr get-login-password | docker login" step) expires after 12h. This box scale-to-
+      # zeros and gets woken back up via the start Lambda above without a full reboot, so a
+      # deploy landing more than 12h after the last boot/deploy hit a stale cached login and
+      # failed with "Your authorization token has expired" even though the instance role has
+      # always had ecr:GetAuthorizationToken — confirmed live 2026-08-12. Re-authenticating
+      # right before every pull (cheap, and uses the same instance-role credentials the box
+      # already has via IMDS) removes the dependency on boot-time login freshness entirely.
+      ECR_REGISTRY          = "${data.aws_ecr_repository.this.registry_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
       START_LAMBDA_NAME     = var.start_lambda_function_name
       START_LAMBDA_TIMEOUT  = tostring(var.start_lambda_wait_seconds)
       APP_STATE_TABLE       = var.app_state_table_name
@@ -106,7 +115,7 @@ resource "terraform_data" "deploy_trigger" {
         --instance-ids "$INSTANCE_ID" \
         --document-name "AWS-RunShellScript" \
         --comment "deploy $COMPOSE_SERVICE_NAME:$IMAGE_TAG" \
-        --parameters commands="cd $COMPOSE_DIR && IMAGE_TAG=$IMAGE_TAG docker compose pull $COMPOSE_SERVICE_NAME && IMAGE_TAG=$IMAGE_TAG docker compose up -d $COMPOSE_SERVICE_NAME" \
+        --parameters commands="cd $COMPOSE_DIR && aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY && IMAGE_TAG=$IMAGE_TAG docker compose pull $COMPOSE_SERVICE_NAME && IMAGE_TAG=$IMAGE_TAG docker compose up -d $COMPOSE_SERVICE_NAME" \
         --query "Command.CommandId" \
         --output text)
 
